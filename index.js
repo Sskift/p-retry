@@ -82,28 +82,33 @@ function calculateRemainingTime(start, max) {
 }
 
 async function delayForRetry(delay, options) {
-	if (delay <= 0) {
-		return;
+	while (delay > 0) {
+		options.signal?.throwIfAborted();
+		// Larger delays overflow setTimeout and would otherwise retry immediately.
+		const timeout = Math.min(delay, (2 ** 31) - 1);
+		const startTime = performance.now();
+
+		await new Promise((resolve, reject) => {
+			const onAbort = () => {
+				clearTimeout(timeoutToken);
+				options.signal?.removeEventListener('abort', onAbort);
+				reject(options.signal.reason);
+			};
+
+			const timeoutToken = setTimeout(() => {
+				options.signal?.removeEventListener('abort', onAbort);
+				resolve();
+			}, timeout);
+
+			if (options.unref) {
+				timeoutToken.unref?.();
+			}
+
+			options.signal?.addEventListener('abort', onAbort, {once: true});
+		});
+
+		delay -= Math.max(timeout, performance.now() - startTime);
 	}
-
-	await new Promise((resolve, reject) => {
-		const onAbort = () => {
-			clearTimeout(timeoutToken);
-			options.signal?.removeEventListener('abort', onAbort);
-			reject(options.signal.reason);
-		};
-
-		const timeoutToken = setTimeout(() => {
-			options.signal?.removeEventListener('abort', onAbort);
-			resolve();
-		}, delay);
-
-		if (options.unref) {
-			timeoutToken.unref?.();
-		}
-
-		options.signal?.addEventListener('abort', onAbort, {once: true});
-	});
 }
 
 async function onAttemptFailure({error, attemptNumber, retriesConsumed, startTime, options}) {
